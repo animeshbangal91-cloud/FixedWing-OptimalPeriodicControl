@@ -63,6 +63,34 @@ switch lower(opts.u_guess_mode)
             a0_ss * 0.6 + a0_ss * 0.4 * (t > pulse_start); ...
             double(t > pulse_start) * p.T_max];
 
+    case 'early_pulse'
+        pulse_end = 0.25*T_period;
+        opts.u_guess_fn = @(t) [a0_ss; T0_ss + ...
+            0.6*(p.T_max-T0_ss)*double(t < pulse_end)];
+
+    case 'late_pulse'
+        pulse_start = 0.75*T_period;
+        opts.u_guess_fn = @(t) [a0_ss; T0_ss + ...
+            0.6*(p.T_max-T0_ss)*double(t > pulse_start)];
+
+    case 'smooth_pulse'
+        omega = 2*pi/T_period;
+        opts.u_guess_fn = @(t) [a0_ss; T0_ss + ...
+            0.5*(p.T_max-T0_ss)*(0.5-0.5*cos(omega*t))];
+
+    case 'double_pulse'
+        omega = 4*pi/T_period;
+        opts.u_guess_fn = @(t) [a0_ss; T0_ss + ...
+            0.4*(p.T_max-T0_ss)*(0.5-0.5*cos(omega*t))];
+
+    case 'long_glide'
+        if ~isfield(opts,'climb_duty'), opts.climb_duty=0.20; end
+        if ~isfield(opts,'climb_thrust_fraction'), opts.climb_thrust_fraction=1.0; end
+        duty=max(0.05,min(opts.climb_duty,0.60));
+        thrust_fraction=max(0.05,min(opts.climb_thrust_fraction,1.0));
+        opts.u_guess_fn=@(t) [a0_ss; ...
+            thrust_fraction*p.T_max*double(mod(t,T_period)<duty*T_period)];
+
     case 'sine_periodic'
         % Sinusoidal control kick around the steady trim. Steady level flight
         % is itself a KKT point of the periodic NLP, so a near-trim warm-start
@@ -133,7 +161,7 @@ xdot_flight = aircraft_dynamics(x_sym(1:4), u_sym, p);
 
 switch lower(opts.cost_mode)
     case 'energy'
-        Pbus_sym = u_sym(2) * x_sym(4) / p.eta_total;
+        Pbus_sym = propulsion_power_model(u_sym(2), x_sym(4), p);
         if use_battery
             [I_sym, Vterm_sym, L_sym, Ploss_sym] = ...
                 battery_power_model(Pbus_sym, x_sym(5), p.battery);
@@ -388,7 +416,7 @@ for k = 0:N-1
 
         % Electrical propulsion demand before optional battery losses.
         if isfinite(opts.propulsion_power_max)
-            propulsion_power_j = Uk(2)*Vj/p.eta_total;
+            propulsion_power_j = propulsion_power_model(Uk(2), Vj, p);
             g = {g{:}, propulsion_power_j};
             lbg = [lbg; 0];
             ubg = [ubg; opts.propulsion_power_max];
@@ -571,7 +599,7 @@ for kk = 1:N
     xk = x_traj(kk,:).';
     uk = u_traj(kk,:).';
     if strcmpi(opts.cost_mode,'energy')
-        Pbus_k = uk(2) * xk(4) / p.eta_total;
+        Pbus_k = propulsion_power_model(uk(2), xk(4), p);
         if use_battery
             [~, ~, Lk] = battery_power_model(Pbus_k, xk(5), p.battery);
         else

@@ -48,13 +48,17 @@ Zdot   = V*sin(gma);
 gmadot = (Lift - m_sym*g_sym*cos(gma))/(m_sym*V);
 Vdot   = (Thr - Drag)/m_sym - g_sym*sin(gma);
 
-P_elec  = Thr*V/eta_sym;
+if isfield(p,'propulsion_efficiency_model') && ~strcmpi(p.propulsion_efficiency_model,'constant')
+    P_elec = propulsion_power_model(Thr, V, p);
+else
+    P_elec = Thr*V/eta_sym;
+end
 Vground = V*cos(gma);
 
 switch lower(cost_mode)
     case 'energy'
         Lrun = P_elec;
-        mu = T0 / p.eta_total;
+        mu = base.cost_dist_op;
     case 'fuel_rate'
         Lrun = sigma_sym * Thr;
         mu = (p.sigma*T0) / V0;
@@ -212,4 +216,3 @@ else
     val = default_val;
 end
 end
-

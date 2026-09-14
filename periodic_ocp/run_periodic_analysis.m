@@ -29,7 +29,12 @@ PI_MODE_RANGE = 'distance_density';
 SOLVE_ENDURANCE = true;
 SOLVE_RANGE     = false;
 
-dt_target = 0.005;
+% Final-paper workflow. When true, run the PI test and three requested period
+% sweeps with different periodic/steady speed comparisons.
+FINAL_THREE_CASES = true;
+FINAL_CASE2_SPEED = 13.0;
+
+dt_target = 0.50; % extended-period screening; refine only the winner later
 
 USE_PARALLEL = false;
 N_WORKERS = [];
@@ -44,7 +49,31 @@ STALL_MARGIN = 0.96;
 % Provisional maneuvering envelope. Replace these values with validated
 % airframe limits before using the result as a flight-safety claim.
 LOAD_FACTOR_BOUNDS = [0.5, 2.0];
-USE_BATTERY_MODEL = false;
+
+% ---------------- Optional models / studies -----------------
+% Change only these settings to turn individual enhancements on or off.
+FEATURES = struct();
+FEATURES.battery_model       = false;
+FEATURES.propulsion_enabled  = false;       % legacy constant eta_total model
+FEATURES.propulsion_model    = 'flightory_generic'; % retained for optional re-enable
+FEATURES.propeller_drag      = 'off';       % clean-airframe theoretical baseline
+FEATURES.multistart          = true;
+FEATURES.refine_period       = false;
+FEATURES.aero_sensitivity    = false;
+FEATURES.fair_comparison     = true;
+FEATURES.atmosphere          = false;
+
+% Optional-study settings (used only when the corresponding switch is on).
+MULTISTART_MODES = {'sine_periodic','steady','long_glide_20','early_pulse'};
+MULTISTART_AMPS = 0.50;
+REFINE_PERIOD_HALF_WIDTH = 10; % [s]
+REFINE_PERIOD_STEP = 2;        % [s]
+ATMOSPHERE_VERTICAL_WIND = 1.0; % [m/s], positive upward
+
+% Applied only when FEATURES.aero_sensitivity is true. Values other than 1
+% are design sensitivities, not manufacturer-validated Stallion parameters.
+AERO_MODIFIERS.CL_max_scale = 1.10;
+AERO_MODIFIERS.wing_area_scale = 1.00;
 
 % Additional provisional flight-envelope limits. Replace with measured or
 % manufacturer-qualified Stallion limits when available.
@@ -72,7 +101,7 @@ switch lower(AIRFRAME)
     case 'stallion'
         p = aircraft_params();
         ocp_z_exc = 300;
-        ocp_gamma = deg2rad(40);
+        ocp_gamma = deg2rad(25);
         ocp_alpha = [p.alpha_min, p.alpha_max];
 
     case 'aerosonde'
@@ -93,11 +122,64 @@ switch lower(AIRFRAME)
         error('Unknown airframe: %s.', AIRFRAME);
 end
 
-if USE_BATTERY_MODEL
+if FEATURES.aero_sensitivity
+    p.CL_max = AERO_MODIFIERS.CL_max_scale*p.CL_max;
+    p.S = AERO_MODIFIERS.wing_area_scale*p.S;
+    fprintf('  Aero sensitivity: CL_max x %.3f, wing area x %.3f\n', ...
+        AERO_MODIFIERS.CL_max_scale,AERO_MODIFIERS.wing_area_scale);
+end
+
+if FEATURES.battery_model
     p.battery = battery_params('I_max', 15.0);
     fprintf('  Battery model: generic %dS %.1f Ah %s (initial SOC %.0f%%)\n', ...
         p.battery.n_series, p.battery.capacity_Ah, p.battery.chemistry, ...
         100*p.battery.soc0);
+end
+
+if ~FEATURES.propulsion_enabled
+    active_propulsion_model = 'constant';
+else
+    active_propulsion_model = lower(FEATURES.propulsion_model);
+end
+
+switch active_propulsion_model
+    case 'constant'
+        p.propulsion_efficiency_model = 'constant';
+        fprintf('  Propulsion model: constant efficiency\n');
+    case 'generic'
+        p.propulsion_efficiency_model = 'map';
+        p.propulsion_map = propulsion_map_params();
+        fprintf('  Propulsion model: generic sensitivity map\n');
+    case 'flightory_generic'
+        p.propulsion_efficiency_model = 'flightory_generic';
+        p.propulsion_map = propulsion_map_params();
+        fprintf('  Propulsion model: generic Flightory Stallion 4S sensitivity map\n');
+    case 'uiuc_7x4'
+        p.propulsion_efficiency_model = 'uiuc_7x4';
+        p.propulsion_map = propulsion_map_params();
+        fprintf('  Propulsion model: UIUC Master Airscrew 7x4 surrogate\n');
+    case 'bench_poly'
+        p.propulsion_efficiency_model = 'bench_poly';
+        p.propulsion_map = propulsion_map_params();
+        p.T_max = min(p.T_max, p.propulsion_map.T_max_measured);
+        fprintf('  Propulsion model: supplied EMAX/Gemfan static bench fit\n');
+    otherwise
+        error('Unknown FEATURES.propulsion_model: %s', FEATURES.propulsion_model);
+end
+
+if FEATURES.propulsion_enabled
+    fprintf('  Propulsion enhancement: ENABLED\n');
+else
+    fprintf('  Propulsion enhancement: DISABLED (legacy constant efficiency)\n');
+end
+
+p.propeller_drag_model = lower(FEATURES.propeller_drag);
+p.propeller_drag = propeller_drag_params();
+
+if FEATURES.atmosphere
+    p.vertical_wind = ATMOSPHERE_VERTICAL_WIND;
+else
+    p.vertical_wind = 0;
 end
 
 % Convert CL_max into an angle-of-attack limit because the aerodynamic
@@ -147,6 +229,10 @@ if SOLVE_ENDURANCE
     base_pi_endur = steady_cruise(p, false, PI_COST);
     pi_endur = pi_test_core(p, base_pi_endur, PI_COST, 'endurance trim', ...
         'reduced2', PI_MODE_ENDUR);
+    if FINAL_THREE_CASES
+        exportgraphics(gcf,fullfile(here,'final_pi_test.png'),'Resolution',300,'BackgroundColor','white');
+        exportgraphics(gcf,fullfile(here,'final_pi_test.pdf'),'ContentType','vector','BackgroundColor','white');
+    end
     fprintf('  Endurance trim PI: T*=%.2f s, lambda_min=%.4e\n', ...
         pi_endur.T_star, pi_endur.lam_worst);
     if pi_endur.min_at_boundary
@@ -177,7 +263,8 @@ end
 
 %% ---------------- Phase 2: OCP sweep ------------------------
 USE_FIXED_TLIST = true;
-FIXED_TLIST = [7.24, 10, 20, 30, 40, 50, 60, 70, 80];
+FIXED_TLIST = [7.24, 20, 40, 60, 80, 100, 120, 140, 160, 180, 200, ...
+               220, 230, 235, 240, 260, 280, 300];
 
 if USE_FIXED_TLIST
     T_list = FIXED_TLIST;
@@ -226,6 +313,21 @@ opts.perturb_amp      = 0.50;
 opts.w_rate = 0;
 opts.alpha_rate_max = deg2rad(60);
 opts.T_rate_max     = 500;
+opts.multistart = FEATURES.multistart;
+opts.multistart_modes = MULTISTART_MODES;
+opts.multistart_amps = MULTISTART_AMPS;
+opts.report_global_steady_power = P_steady_endur;
+opts.report_speed_grid = base_endur.V_grid;
+opts.report_power_grid = time_grid_endur;
+
+if FINAL_THREE_CASES
+    final_results = run_final_three_period_sweeps(p,base_endur,base_range,opts, ...
+        AIRFRAME,COST,cost_labels(COST),airframe_paper_name(AIRFRAME), ...
+        T_list,dt_target,FINAL_CASE2_SPEED,P_steady_endur,JpM_steady_range);
+    save(fullfile(here,'final_three_sweep_results.mat'),'final_results','p','pi_result','T_list');
+    fprintf('\nFinal three-sweep analysis complete. Saved CSV, MAT, PI, three sweep plots, and three trajectory figures.\n');
+    return
+end
 
 if ~SOLVE_ENDURANCE && ~SOLVE_RANGE
     error('Both SOLVE_ENDURANCE and SOLVE_RANGE are false; nothing to do.');
@@ -377,7 +479,7 @@ function res = sweep_ocp(T_list, dt_target, V_ref, p, opts_in, objective_mode, u
             D_dummy = V_ref * T;
 
             try
-                sol = ocp_casadi_fixed_T(p, T, D_dummy, N_i, opts);
+                sol = solve_period_multistart(p,T,D_dummy,N_i,opts);
                 flag(ii) = string(sol.flag);
                 sol_all{ii} = sol;
 
@@ -417,7 +519,7 @@ function res = sweep_ocp(T_list, dt_target, V_ref, p, opts_in, objective_mode, u
                     end
                 end
 
-                sol = ocp_casadi_fixed_T(p, T, D_dummy, N_i, opts);
+                sol = solve_period_multistart(p,T,D_dummy,N_i,opts);
                 flag(ii) = string(sol.flag);
                 sol_all{ii} = sol;
 
@@ -430,6 +532,22 @@ function res = sweep_ocp(T_list, dt_target, V_ref, p, opts_in, objective_mode, u
 
                     fprintf('OK  P_avg=%.4f  J/m=%.4f  V_avg=%.2f  (%s)\n', ...
                         sol.P_avg, sol.J_per_m, sol.V_avg, sol.flag);
+
+                    if isfield(opts,'report_global_steady_power')
+                        saving_global=100*(opts.report_global_steady_power-sol.P_avg)/opts.report_global_steady_power;
+                        [~,ir]=min(abs(opts.report_speed_grid-sol.V_avg));
+                        P_same=opts.report_power_grid(ir);
+                        saving_same=100*(P_same-sol.P_avg)/P_same;
+                        gam_deg=rad2deg(sol.x(:,3));alpha_deg=rad2deg(sol.alpha);
+                        vz=sol.x(:,4).*sin(sol.x(:,3));
+                        fprintf('          savings: global=%+.4f%% | same-speed=%+.4f%% | steady(same V)=%.4f W\n', ...
+                            saving_global,saving_same,P_same);
+                        fprintf('          trajectory: V=[%.3f, %.3f] m/s | gamma=[%.3f, %.3f] deg | alpha=[%.3f, %.3f] deg\n', ...
+                            min(sol.x(:,4)),max(sol.x(:,4)),min(gam_deg),max(gam_deg),min(alpha_deg),max(alpha_deg));
+                        fprintf('          constraints: n=[%.3f, %.3f] | Vz=[%.3f, %.3f] m/s | thrust=[%.3f, %.3f] N | Pmax=%.3f W\n', ...
+                            min(sol.load_factor),max(sol.load_factor),min(vz),max(vz), ...
+                            min(sol.T_thrust),max(sol.T_thrust),max(sol.P_elec));
+                    end
 
                     sol_prev = sol;
                 else
@@ -457,6 +575,51 @@ function res = sweep_ocp(T_list, dt_target, V_ref, p, opts_in, objective_mode, u
     res.V_avg   = V_avg;
     res.flag    = flag;
     res.sol_all = sol_all;
+end
+
+function best=solve_period_multistart(p,T,D,N,opts)
+% Run configured initial guesses and retain the lowest-power feasible result.
+if ~isfield(opts,'multistart')||~opts.multistart
+    best=ocp_casadi_fixed_T(p,T,D,N,opts);return
+end
+modes=opts.multistart_modes;best=[];best_trial=[];screen_N=min(N,120);
+for j=1:numel(modes)
+    trial=opts;label=string(modes{j});trial.perturb_amp=.50;
+    if startsWith(label,"long_glide_")
+        trial.u_guess_mode='long_glide';
+        trial.climb_duty=str2double(extractAfter(label,"long_glide_"))/100;
+        trial.climb_thrust_fraction=1;
+    else
+        trial.u_guess_mode=char(label);
+    end
+    fprintf('\n          trying initial guess %-16s ... ',label);
+    try
+        candidate=ocp_casadi_fixed_T(p,T,D,screen_N,trial);
+        if candidate.success
+            fprintf('OK, P_avg=%.5f W\n',candidate.P_avg);
+            % Treat sub-0.01 W differences as a numerical tie. In a tie,
+            % retain the earlier, smoother candidate rather than switching
+            % full-resolution branches because of coarse-mesh solver noise.
+            if isempty(best)||candidate.P_avg<best.P_avg-0.01
+                best=candidate;best.initial_guess_used=label;best_trial=trial;
+            end
+        else
+            fprintf('FAILED (%s)\n',candidate.flag);
+        end
+    catch ME
+        fprintf('ERROR: %s\n',ME.message);
+    end
+end
+if isempty(best),error('All initial guesses failed for T=%.3f s.',T);end
+selected_label=best.initial_guess_used;
+fprintf('          selected screening guess: %s (N=%d, P_avg=%.5f W)\n',selected_label,screen_N,best.P_avg);
+if N>screen_N
+    fprintf('          refining selected guess at full N=%d ... ',N);
+    best=ocp_casadi_fixed_T(p,T,D,N,best_trial);
+    if ~best.success,error('Full-resolution solve failed for T=%.3f s (%s).',T,best.flag);end
+    best.initial_guess_used=selected_label;
+    fprintf('OK, P_avg=%.5f W\n',best.P_avg);
+end
 end
 
 function res = postprocess_savings(res, base_range, cost_mode, P_steady_endur, JpM_steady_range)
@@ -528,7 +691,7 @@ function print_table(T_list, res)
 end
 
 function plot_best_solution(res, idx, T_list, p, AIRFRAME, COST, label_str, cost_label_paper, airframe_paper)
-%PLOT_BEST_SOLUTION ACC-ready 6-panel trajectory figure.
+%PLOT_BEST_SOLUTION Detailed trajectory report and machine-readable data.
 % No overall title, no subplot titles. LaTeX math axis labels.
 
 if nargin < 8 || isempty(cost_label_paper), cost_label_paper = COST; end %#ok<NASGU>
@@ -557,6 +720,14 @@ tu   = t(1:end-1);
 alph = rad2deg(s.u(:,1));
 Thr  = s.u(:,2);
 Vavg = s.V_avg;
+if isfield(s,'load_factor')
+    nload = s.load_factor;
+else
+    nload = nan(size(t));
+end
+Vz = V .* sin(deg2rad(gam));
+[Pprop, eta_total_hist] = propulsion_power_model(s.T_thrust, V, p);
+Ecum = cumtrapz(t, Pprop);
 
 NAVY  = [0.118 0.153 0.380];
 MID   = [0.290 0.435 0.647];
@@ -570,7 +741,7 @@ FS_AX = 11;
 FS_TK = 10;
 FS_PANEL = 11;
 FIG_W = 17;
-FIG_H = 14;
+FIG_H = 22;
 
 fig = figure('Color','w', ...
     'Units','centimeters', 'Position',[2 2 FIG_W FIG_H], ...
@@ -584,7 +755,7 @@ set(fig, 'DefaultAxesFontName','Times New Roman', ...
          'DefaultLegendInterpreter','latex', ...
          'DefaultAxesTickLabelInterpreter','latex');
 
-tiledlayout(3,2,'TileSpacing','compact','Padding','compact');
+tiledlayout(5,2,'TileSpacing','compact','Padding','compact');
 
     function ax = new_ax()
         ax = nexttile;
@@ -660,6 +831,35 @@ ylabel(ax6,'$T~[\mathrm{N}]$','FontSize',FS_AX);
 ylim(ax6,[-0.05*p.T_max, 1.15*p.T_max]);
 add_panel(ax6,'(f)');
 
+ax7 = new_ax();
+plot(ax7, t, nload, 'Color',MID, 'LineWidth',LW);
+yline(ax7, 0.5, '--', 'Color',RED, 'LineWidth',LW_REF);
+yline(ax7, 2.0, '--', 'Color',RED, 'LineWidth',LW_REF);
+xlabel(ax7,'$t~[\mathrm{s}]$','FontSize',FS_AX);
+ylabel(ax7,'$n=L/(mg)$','FontSize',FS_AX);
+add_panel(ax7,'(g)');
+
+ax8 = new_ax();
+plot(ax8, t, Vz, 'Color',NAVY, 'LineWidth',LW);
+yline(ax8, -5, '--', 'Color',RED, 'LineWidth',LW_REF);
+yline(ax8, 8, '--', 'Color',RED, 'LineWidth',LW_REF);
+xlabel(ax8,'$t~[\mathrm{s}]$','FontSize',FS_AX);
+ylabel(ax8,'$\dot Z~[\mathrm{m/s}]$','FontSize',FS_AX);
+add_panel(ax8,'(h)');
+
+ax9 = new_ax();
+plot(ax9, t, Pprop, 'Color',AMBER, 'LineWidth',LW);
+yline(ax9, 900, '--', 'Color',RED, 'LineWidth',LW_REF);
+xlabel(ax9,'$t~[\mathrm{s}]$','FontSize',FS_AX);
+ylabel(ax9,'$P_{\mathrm{elec}}~[\mathrm{W}]$','FontSize',FS_AX);
+add_panel(ax9,'(i)');
+
+ax10 = new_ax();
+plot(ax10, t, Ecum, 'Color',MID, 'LineWidth',LW);
+xlabel(ax10,'$t~[\mathrm{s}]$','FontSize',FS_AX);
+ylabel(ax10,'$E~[\mathrm{J}]$','FontSize',FS_AX);
+add_panel(ax10,'(j)');
+
 safe = @(str) regexprep(lower(str),'[^a-z0-9]+','_');
 fname = sprintf('traj_%s_%s_%s_tau%.0f', ...
     safe(airframe_paper), safe(COST), safe(label_str), round(tau));
@@ -667,7 +867,14 @@ fname = sprintf('traj_%s_%s_%s_tau%.0f', ...
 exportgraphics(fig, [fname '.png'], 'Resolution',300, 'BackgroundColor','white');
 exportgraphics(fig, [fname '.pdf'], 'ContentType','vector', 'BackgroundColor','white');
 
-fprintf('  Saved: %s.png  |  %s.pdf\n', fname, fname);
+data_table = table(t, X, Z, gam, V, s.alpha, s.T_thrust, nload, Vz, Pprop, Ecum, ...
+    'VariableNames', {'time_s','X_m','Z_m','gamma_deg','V_mps','alpha_rad', ...
+    'thrust_N','load_factor','vertical_speed_mps','electrical_power_W','cumulative_energy_J'});
+writetable(table(t, eta_total_hist, 'VariableNames', {'time_s','propulsion_efficiency'}), ...
+    [fname '_efficiency.csv']);
+writetable(data_table, [fname '.csv']);
+
+fprintf('  Saved: %s.png  |  %s.pdf  |  %s.csv\n', fname, fname, fname);
 end
 
 function plot_sweep(T_list, range_res, end_res, ...
@@ -830,4 +1037,80 @@ function name = airframe_paper_name(AIRFRAME)
         otherwise
             name = char(AIRFRAME);
     end
-end 
+end
+
+function results=run_final_three_period_sweeps(p,base,base_range,opts,AIRFRAME,COST,cost_label,airframe_paper,T_list,dt_target,V13,Popt,Jrange)
+% Only two OCP sweeps are required. Case 3 reuses Case 1's 13 m/s trajectories.
+Vopt=base.V_op;[~,i13]=min(abs(base.V_grid-V13));P13=base.P_elec_grid(i13);
+opts.objective_mode='endurance';opts.enforce_distance=true;
+
+fprintf('\n============================================================\n');
+fprintf(' SWEEP 1 OF 3: periodic 13 m/s versus steady 13 m/s\n');
+fprintf(' Period order: [%s] s\n',strjoin(string(T_list),', '));
+fprintf('============================================================\n');
+opts.report_global_steady_power=Popt;
+sweep13=sweep_ocp(T_list,dt_target,V13,p,opts,'endurance',false,[],false);
+sweep13=postprocess_savings(sweep13,base_range,COST,Popt,Jrange);
+save_sweep_table('case1_both_13mps',T_list,sweep13,P13,'same_speed');
+
+fprintf('\n============================================================\n');
+fprintf(' SWEEP 2 OF 3: periodic %.5f m/s versus steady %.5f m/s\n',Vopt,Vopt);
+fprintf(' Period order: [%s] s\n',strjoin(string(T_list),', '));
+fprintf('============================================================\n');
+opts.report_global_steady_power=Popt;
+sweepopt=sweep_ocp(T_list,dt_target,Vopt,p,opts,'endurance',false,[],false);
+sweepopt=postprocess_savings(sweepopt,base_range,COST,Popt,Jrange);
+save_sweep_table('case2_both_optimal_speed',T_list,sweepopt,Popt,'global');
+
+fprintf('\n============================================================\n');
+fprintf(' SWEEP 3 OF 3: periodic 13 m/s versus globally optimal steady %.5f m/s\n',Vopt);
+fprintf(' Reusing Sweep 1 trajectories; no duplicate OCP solves are required.\n');
+fprintf('============================================================\n');
+save_sweep_table('case3_periodic_13_vs_global_steady',T_list,sweep13,Popt,'global');
+
+case_name=[repmat("both_13mps",numel(T_list),1);repmat("both_optimal_speed",numel(T_list),1);repmat("periodic_13_vs_global_steady",numel(T_list),1)];
+period_s=repmat(T_list(:),3,1);periodic_speed_mps=[sweep13.V_avg;sweepopt.V_avg;sweep13.V_avg];
+steady_speed_mps=[repmat(V13,numel(T_list),1);repmat(Vopt,2*numel(T_list),1)];
+steady_power_W=[repmat(P13,numel(T_list),1);repmat(Popt,2*numel(T_list),1)];
+periodic_power_W=[sweep13.P_avg;sweepopt.P_avg;sweep13.P_avg];
+saving_pct=100*(steady_power_W-periodic_power_W)./steady_power_W;
+results=table(case_name,period_s,steady_speed_mps,periodic_speed_mps,steady_power_W,periodic_power_W,saving_pct);
+writetable(results,'final_three_sweep_results.csv');disp(results);
+
+plot_final_sweep(T_list,sweep13.P_avg,P13,100*(P13-sweep13.P_avg)/P13,'case1_both_13mps');
+plot_final_sweep(T_list,sweepopt.P_avg,Popt,100*(Popt-sweepopt.P_avg)/Popt,'case2_both_optimal_speed');
+plot_final_sweep(T_list,sweep13.P_avg,Popt,100*(Popt-sweep13.P_avg)/Popt,'case3_periodic_13_vs_global_steady');
+
+[~,i1]=min(sweep13.P_avg);[~,i2]=min(sweepopt.P_avg);
+plot_best_solution(sweep13,i1,T_list,p,AIRFRAME,COST,'Case 1 sweep both at 13 mps',cost_label,airframe_paper);
+plot_best_solution(sweepopt,i2,T_list,p,AIRFRAME,COST,'Case 2 sweep both at optimal speed',cost_label,airframe_paper);
+plot_best_solution(sweep13,i1,T_list,p,AIRFRAME,COST,'Case 3 sweep periodic 13 vs global steady',cost_label,airframe_paper);
+end
+
+function save_sweep_table(tag,T_list,r,Psteady,mode)
+if strcmp(mode,'same_speed'),saving=100*(Psteady-r.P_avg)/Psteady;else,saving=100*(Psteady-r.P_avg)/Psteady;end
+tbl=table(T_list(:),r.V_avg,r.P_avg,repmat(Psteady,numel(T_list),1),saving,r.flag, ...
+ 'VariableNames',{'period_s','periodic_speed_mps','periodic_power_W','steady_power_W','saving_pct','solver_status'});
+writetable(tbl,['final_sweep_' tag '.csv']);
+fprintf('\nCompleted %s:\n',strrep(tag,'_',' '));disp(tbl);
+end
+
+function plot_final_sweep(T,Pperiodic,Psteady,saving,tag)
+fig=figure('Color','w','Name',strrep(tag,'_',' '));tiledlayout(1,2,'TileSpacing','compact');
+nexttile;plot(T,Pperiodic,'-o','LineWidth',1.5);hold on;yline(Psteady,'--','Steady');grid on;
+xlabel('Period [s]');ylabel('Average electrical power [W]');
+nexttile;plot(T,saving,'-o','LineWidth',1.5);yline(0,'-');grid on;
+xlabel('Period [s]');ylabel('Power saving [%]');
+exportgraphics(fig,['final_sweep_' tag '.png'],'Resolution',300,'BackgroundColor','white');
+exportgraphics(fig,['final_sweep_' tag '.pdf'],'ContentType','vector','BackgroundColor','white');
+
+% Separate saving-only figure for directly seeing the peak/dip with period.
+fig2=figure('Color','w','Name',['Saving ' strrep(tag,'_',' ')]);
+plot(T,saving,'-o','LineWidth',1.8,'MarkerFaceColor',[0.12 0.32 0.62]);grid on;hold on;
+yline(0,'k-');[bestSaving,ib]=max(saving);plot(T(ib),bestSaving,'p','MarkerSize',12, ...
+ 'MarkerFaceColor',[0.85 0.45 0.10],'MarkerEdgeColor',[0.85 0.45 0.10]);
+xlabel('Period [s]');ylabel('Electrical power saving [%]');
+title(sprintf('Best: %.3f%% at T = %.1f s',bestSaving,T(ib)));
+exportgraphics(fig2,['final_savings_' tag '.png'],'Resolution',300,'BackgroundColor','white');
+exportgraphics(fig2,['final_savings_' tag '.pdf'],'ContentType','vector','BackgroundColor','white');
+end

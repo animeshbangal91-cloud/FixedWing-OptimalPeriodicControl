@@ -10,13 +10,17 @@ function p = aircraft_params(varargin)
 %   p.cruise_mode = 'range' or 'endurance'
 
 %% ---------------- Identity ---------------------------------
-p.name = 'Flightory Stallion VTOL (fixed-wing cruise)';
+p.name = 'Flightory Stallion (generic fixed-wing configuration)';
+p.manufacturer_source = 'https://flightory.com/product/stallion/';
+p.manufacturer_optimal_speed = [60 70] / 3.6; % [m/s], published 60-70 km/h
+p.n_propellers = 2;                            % published twin-motor layout
+p.nominal_battery_series = 4;                  % manufacturer generic configuration
 
 %% ---------------- Operating-point selection -----------------
 p.cruise_mode = 'endurance'; % 'range' or 'endurance'
 
 %% ---------------- Geometry / mass ---------------------------
-p.m    = 3.0;     % [kg]
+p.m    = 3.0;     % [kg], upper end of published 1.5-3.0 kg AUW
 p.g    = 9.81;
 
 p.b    = 1.340;   % [m]
@@ -75,4 +79,3 @@ p.k         = 1 / (pi * p.e * p.AR);
 p.eta_total = p.eta_prop * p.eta_motor * p.eta_esc;
 
 end
-

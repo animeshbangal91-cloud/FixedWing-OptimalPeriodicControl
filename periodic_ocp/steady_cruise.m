@@ -30,15 +30,24 @@ for i = 1:nV
     V = V_grid(i);
     q = 0.5*p.rho*V^2;
 
-    % Lift balance for level flight (gamma=0): L = m g
-    CL_req = (p.m*p.g) / (q*p.S);
+    if isfield(p,'vertical_wind'), wz = p.vertical_wind; else, wz = 0; end
+    if abs(wz) >= V
+        feas(i) = false;
+        continue;
+    end
+    gamma_req = -asin(wz/V); % zero ground-relative vertical speed
+
+    % Steady, constant-altitude balance in a vertically moving air mass.
+    CL_req = (p.m*p.g*cos(gamma_req)) / (q*p.S);
     alpha_req = (CL_req - p.CL0) / p.CLa;
 
     % Drag from parabolic polar
-    CD_req = p.CD0 + p.k*CL_req^2;
-    D_req = q*p.S*CD_req;
-
-    T_needed = D_req;
+    CD_airframe = p.CD0 + p.k*CL_req^2;
+    T_needed = q*p.S*CD_airframe + p.m*p.g*sin(gamma_req);
+    for it = 1:20
+        CD_req = CD_airframe + propeller_drag_cd(T_needed,p);
+        T_needed = q*p.S*CD_req + p.m*p.g*sin(gamma_req);
+    end
 
     if alpha_req < p.alpha_min || alpha_req > p.alpha_max
         feas(i) = false;
@@ -51,17 +60,18 @@ for i = 1:nV
     alpha(i) = alpha_req;
     Treq(i)  = T_needed;
 
-    Pbus = (T_needed * V) / p.eta_total;
+    Pbus = propulsion_power_model(T_needed, V, p);
     if isfield(p,'battery') && ~isempty(p.battery)
         [~, ~, Pelec(i)] = battery_power_model(Pbus, p.battery.soc0, p.battery);
     else
         Pelec(i) = Pbus;
     end
-    Epm(i)   = Pelec(i) / V; % = T/eta_total
+    V_ground = V*cos(gamma_req);
+    Epm(i)   = Pelec(i) / V_ground;
 
     if ~isfield(p,'sigma') || isempty(p.sigma), p.sigma = 1.0; end
     Fdot(i) = p.sigma * T_needed;
-    Fpm(i)  = Fdot(i) / V;
+    Fpm(i)  = Fdot(i) / V_ground;
 end
 
 switch lower(cost_mode)
