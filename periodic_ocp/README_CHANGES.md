@@ -819,3 +819,10 @@ Without this constraint, the optimizer can request lift beyond the configured
   settings. The active Stallion gamma limit remains plus/minus 25 degrees.
   The previously recorded 3.0232% saving belongs to this restored envelope;
   the interrupted tighter-envelope run is not a replacement for it.
+- Simplified the final analysis workflow to one comparison only. The periodic
+  trajectory is pinned to the globally optimal steady-endurance speed, and its
+  average electrical power is compared with steady cruise at that identical
+  speed. The driver no longer solves or plots either 13 m/s comparison. New
+  outputs use the `final_optimal_speed_sweep_results` and
+  `both_optimal_speed` names so they are distinguishable from older three-case
+  files that may still exist in the folder.

@@ -29,10 +29,9 @@ PI_MODE_RANGE = 'distance_density';
 SOLVE_ENDURANCE = true;
 SOLVE_RANGE     = false;
 
-% Final-paper workflow. When true, run the PI test and three requested period
-% sweeps with different periodic/steady speed comparisons.
-FINAL_THREE_CASES = true;
-FINAL_CASE2_SPEED = 13.0;
+% Final workflow: sweep periodic flight at the globally optimal steady-
+% endurance speed and compare it with steady cruise at that same speed.
+FINAL_OPTIMAL_SPEED_ONLY = true;
 
 dt_target = 0.50; % extended-period screening; refine only the winner later
 
@@ -229,7 +228,7 @@ if SOLVE_ENDURANCE
     base_pi_endur = steady_cruise(p, false, PI_COST);
     pi_endur = pi_test_core(p, base_pi_endur, PI_COST, 'endurance trim', ...
         'reduced2', PI_MODE_ENDUR);
-    if FINAL_THREE_CASES
+    if FINAL_OPTIMAL_SPEED_ONLY
         exportgraphics(gcf,fullfile(here,'final_pi_test.png'),'Resolution',300,'BackgroundColor','white');
         exportgraphics(gcf,fullfile(here,'final_pi_test.pdf'),'ContentType','vector','BackgroundColor','white');
     end
@@ -320,12 +319,13 @@ opts.report_global_steady_power = P_steady_endur;
 opts.report_speed_grid = base_endur.V_grid;
 opts.report_power_grid = time_grid_endur;
 
-if FINAL_THREE_CASES
-    final_results = run_final_three_period_sweeps(p,base_endur,base_range,opts, ...
+if FINAL_OPTIMAL_SPEED_ONLY
+    final_results = run_final_optimal_speed_sweep(p,base_endur,base_range,opts, ...
         AIRFRAME,COST,cost_labels(COST),airframe_paper_name(AIRFRAME), ...
-        T_list,dt_target,FINAL_CASE2_SPEED,P_steady_endur,JpM_steady_range);
-    save(fullfile(here,'final_three_sweep_results.mat'),'final_results','p','pi_result','T_list');
-    fprintf('\nFinal three-sweep analysis complete. Saved CSV, MAT, PI, three sweep plots, and three trajectory figures.\n');
+        T_list,dt_target,P_steady_endur,JpM_steady_range);
+    save(fullfile(here,'final_optimal_speed_sweep_results.mat'), ...
+        'final_results','p','pi_result','T_list');
+    fprintf('\nOptimal-speed sweep complete. Saved CSV, MAT, PI, sweep plots, and the best trajectory figure.\n');
     return
 end
 
@@ -1039,52 +1039,34 @@ function name = airframe_paper_name(AIRFRAME)
     end
 end
 
-function results=run_final_three_period_sweeps(p,base,base_range,opts,AIRFRAME,COST,cost_label,airframe_paper,T_list,dt_target,V13,Popt,Jrange)
-% Only two OCP sweeps are required. Case 3 reuses Case 1's 13 m/s trajectories.
-Vopt=base.V_op;[~,i13]=min(abs(base.V_grid-V13));P13=base.P_elec_grid(i13);
+function results=run_final_optimal_speed_sweep(p,base,base_range,opts,AIRFRAME,COST,cost_label,airframe_paper,T_list,dt_target,Popt,Jrange)
+% Sweep periodic flight only at the globally optimal steady-endurance speed.
+Vopt=base.V_op;
 opts.objective_mode='endurance';opts.enforce_distance=true;
 
 fprintf('\n============================================================\n');
-fprintf(' SWEEP 1 OF 3: periodic 13 m/s versus steady 13 m/s\n');
-fprintf(' Period order: [%s] s\n',strjoin(string(T_list),', '));
-fprintf('============================================================\n');
-opts.report_global_steady_power=Popt;
-sweep13=sweep_ocp(T_list,dt_target,V13,p,opts,'endurance',false,[],false);
-sweep13=postprocess_savings(sweep13,base_range,COST,Popt,Jrange);
-save_sweep_table('case1_both_13mps',T_list,sweep13,P13,'same_speed');
-
-fprintf('\n============================================================\n');
-fprintf(' SWEEP 2 OF 3: periodic %.5f m/s versus steady %.5f m/s\n',Vopt,Vopt);
+fprintf(' OPTIMAL-SPEED SWEEP: periodic %.5f m/s versus steady %.5f m/s\n',Vopt,Vopt);
 fprintf(' Period order: [%s] s\n',strjoin(string(T_list),', '));
 fprintf('============================================================\n');
 opts.report_global_steady_power=Popt;
 sweepopt=sweep_ocp(T_list,dt_target,Vopt,p,opts,'endurance',false,[],false);
 sweepopt=postprocess_savings(sweepopt,base_range,COST,Popt,Jrange);
-save_sweep_table('case2_both_optimal_speed',T_list,sweepopt,Popt,'global');
+save_sweep_table('both_optimal_speed',T_list,sweepopt,Popt,'global');
 
-fprintf('\n============================================================\n');
-fprintf(' SWEEP 3 OF 3: periodic 13 m/s versus globally optimal steady %.5f m/s\n',Vopt);
-fprintf(' Reusing Sweep 1 trajectories; no duplicate OCP solves are required.\n');
-fprintf('============================================================\n');
-save_sweep_table('case3_periodic_13_vs_global_steady',T_list,sweep13,Popt,'global');
-
-case_name=[repmat("both_13mps",numel(T_list),1);repmat("both_optimal_speed",numel(T_list),1);repmat("periodic_13_vs_global_steady",numel(T_list),1)];
-period_s=repmat(T_list(:),3,1);periodic_speed_mps=[sweep13.V_avg;sweepopt.V_avg;sweep13.V_avg];
-steady_speed_mps=[repmat(V13,numel(T_list),1);repmat(Vopt,2*numel(T_list),1)];
-steady_power_W=[repmat(P13,numel(T_list),1);repmat(Popt,2*numel(T_list),1)];
-periodic_power_W=[sweep13.P_avg;sweepopt.P_avg;sweep13.P_avg];
+period_s=T_list(:);
+steady_speed_mps=repmat(Vopt,numel(T_list),1);
+periodic_speed_mps=sweepopt.V_avg;
+steady_power_W=repmat(Popt,numel(T_list),1);
+periodic_power_W=sweepopt.P_avg;
 saving_pct=100*(steady_power_W-periodic_power_W)./steady_power_W;
-results=table(case_name,period_s,steady_speed_mps,periodic_speed_mps,steady_power_W,periodic_power_W,saving_pct);
-writetable(results,'final_three_sweep_results.csv');disp(results);
+results=table(period_s,steady_speed_mps,periodic_speed_mps,steady_power_W,periodic_power_W,saving_pct);
+writetable(results,'final_optimal_speed_sweep_results.csv');disp(results);
 
-plot_final_sweep(T_list,sweep13.P_avg,P13,100*(P13-sweep13.P_avg)/P13,'case1_both_13mps');
-plot_final_sweep(T_list,sweepopt.P_avg,Popt,100*(Popt-sweepopt.P_avg)/Popt,'case2_both_optimal_speed');
-plot_final_sweep(T_list,sweep13.P_avg,Popt,100*(Popt-sweep13.P_avg)/Popt,'case3_periodic_13_vs_global_steady');
+plot_final_sweep(T_list,sweepopt.P_avg,Popt,saving_pct,'both_optimal_speed');
 
-[~,i1]=min(sweep13.P_avg);[~,i2]=min(sweepopt.P_avg);
-plot_best_solution(sweep13,i1,T_list,p,AIRFRAME,COST,'Case 1 sweep both at 13 mps',cost_label,airframe_paper);
-plot_best_solution(sweepopt,i2,T_list,p,AIRFRAME,COST,'Case 2 sweep both at optimal speed',cost_label,airframe_paper);
-plot_best_solution(sweep13,i1,T_list,p,AIRFRAME,COST,'Case 3 sweep periodic 13 vs global steady',cost_label,airframe_paper);
+[~,ibest]=min(sweepopt.P_avg);
+plot_best_solution(sweepopt,ibest,T_list,p,AIRFRAME,COST, ...
+    'Both periodic and steady at optimal speed',cost_label,airframe_paper);
 end
 
 function save_sweep_table(tag,T_list,r,Psteady,mode)
