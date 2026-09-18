@@ -826,3 +826,12 @@ Without this constraint, the optimizer can request lift beyond the configured
   outputs use the `final_optimal_speed_sweep_results` and
   `both_optimal_speed` names so they are distinguishable from older three-case
   files that may still exist in the folder.
+- Tightened the existing flight-path-angle-rate constraint from 15 deg/s to
+  3 deg/s for the optimal-speed-only sweep. The OCP already enforces
+  `|gamma_dot| <= GAMMA_RATE_MAX` at every collocation point; this change makes
+  the glide-to-climb pull-up less abrupt while keeping the separate +/-25 deg
+  gamma envelope. In the prior 230 s trajectory, the sampled gamma rate
+  reached about +8.1 deg/s at the lower turn (near the 30 m altitude floor),
+  so the prior 2.5127% saving cannot be reused for the tightened run. The
+  new rate limit is provisional and has not been validated against Stallion
+  flight-test or manufacturer maneuvering data.

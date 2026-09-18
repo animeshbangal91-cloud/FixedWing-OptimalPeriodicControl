@@ -33,7 +33,7 @@ SOLVE_RANGE     = false;
 % endurance speed and compare it with steady cruise at that same speed.
 FINAL_OPTIMAL_SPEED_ONLY = true;
 
-dt_target = 0.50; % extended-period screening; refine only the winner later
+dt_target = 0.5; % extended-period screening; refine only the winner later
 
 USE_PARALLEL = false;
 N_WORKERS = [];
@@ -78,7 +78,7 @@ AERO_MODIFIERS.wing_area_scale = 1.00;
 % manufacturer-qualified Stallion limits when available.
 ALTITUDE_BOUNDS = [30, 250];             % [m]
 VERTICAL_SPEED_BOUNDS = [-5, 8];         % [m/s], [maximum sink, maximum climb]
-GAMMA_RATE_MAX = deg2rad(15);             % [rad/s]
+GAMMA_RATE_MAX = deg2rad(3);              % [rad/s], |d(gamma)/dt| <= 3 deg/s
 PROPULSION_POWER_MAX = 900;               % [W] electrical input
 %% ============================================================
 
