@@ -1,0 +1,28 @@
+{
+  "Before": {
+    "run": "/home/animesh/stallion_experiment/results/20260929_201826_618522",
+    "status": "completed_hold_confirmed",
+    "telemetry_samples": 2207,
+    "circle_recorded_duration_s": 110.30400000000002,
+    "time_aligned_3d_rmse_m": 104.75394240752657,
+    "radial_path_rmse_m": 77.87303136362527,
+    "altitude_rmse_m": 1.4243448408677581,
+    "actual_source": "PX4 LOCAL_POSITION_NED estimator telemetry, not Gazebo ground truth",
+    "note": "Fixed-wing tangent speed magnitude is not a commanded speed; timed error includes phase lag.",
+    "peak_radial_error_m": 202.0942870891962,
+    "peak_time_aligned_error_m": 256.0695960038491
+  },
+  "After": {
+    "run": "/home/animesh/stallion_experiment/results/20260929_202930_994019",
+    "status": "completed_hold_confirmed",
+    "telemetry_samples": 2207,
+    "circle_recorded_duration_s": 110.30000000000001,
+    "time_aligned_3d_rmse_m": 6.397372026661982,
+    "radial_path_rmse_m": 1.496924346684892,
+    "altitude_rmse_m": 0.25387306453615077,
+    "actual_source": "PX4 LOCAL_POSITION_NED estimator telemetry, not Gazebo ground truth",
+    "note": "Fixed-wing tangent speed magnitude is not a commanded speed; timed error includes phase lag.",
+    "peak_radial_error_m": 2.640642604084519,
+    "peak_time_aligned_error_m": 10.801798220542096
+  }
+}

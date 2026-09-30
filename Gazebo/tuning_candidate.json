@@ -1,0 +1,14 @@
+{
+  "name": "entry_and_energy_v2",
+  "parameters": {
+    "RWTO_MAX_THR": 1.0,
+    "MIS_TAKEOFF_ALT": 30.0,
+    "FW_THR_TRIM": 0.36,
+    "NPFG_PERIOD": 8.0,
+    "FW_T_ALT_TC": 3.0,
+    "FW_T_TAS_TC": 3.0,
+    "FW_T_THR_INTEG": 0.08,
+    "FW_T_I_GAIN_PIT": 0.15
+  },
+  "settle_seconds": 5
+}
